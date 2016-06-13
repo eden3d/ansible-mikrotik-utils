@@ -6,6 +6,11 @@ determine the changes required to get the device to another configuration. This
 makes it possible to properly manage Mikrotik devices from configuration
 management tools, such as Ansible.
 
+Install
+-------
+
+`pip install ansible-mikrotik-utils`
+
 Documentation
 -------------
 
