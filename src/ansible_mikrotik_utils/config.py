@@ -1,4 +1,5 @@
 from re import compile as compile_regex, MULTILINE
+from shlex import split
 
 from ansible_mikrotik_utils.script import ADD, SET, ScriptAction, ScriptSection, MikrotikScript
 from ansible_mikrotik_utils.script import parse_addition, parse_settings, invalidates_order
