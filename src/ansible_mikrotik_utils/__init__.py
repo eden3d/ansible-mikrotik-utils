@@ -1,14 +1,6 @@
 from ansible_mikrotik_utils.config import MikrotikConfig
+from ansible_mikrotik_utils.module import MikrotikModule
 
-__all__ = ['compare', 'MikrotikConfig']
-
-
-def compare(base, target):
-    if isinstance(base, str):
-        base = MikrotikConfig.parse(base)
-    if isinstance(target, str):
-        target = MikrotikConfig.parse(target)
-    return base.difference(target)
-
+__all__ = ['MikrotikConfig', 'MikrotikModule']
 
 
