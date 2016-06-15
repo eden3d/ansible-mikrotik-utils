@@ -365,11 +365,9 @@ class ScriptSection(object):
 
 
 class MikrotikScript(object):
-    
+
     # Base object definition, and copy handler
     # -------------------------------------------------------------------------
-
-    prettify = False
 
     def __init__(self, version=None):
         """Create an empty Mikrotik script (ordered container for ScriptSection
