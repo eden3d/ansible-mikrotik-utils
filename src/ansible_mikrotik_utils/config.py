@@ -55,7 +55,7 @@ def format_addition(values, count=0, index=None):
     assert isinstance(values, dict)
     text = format_values(values)
     if index is not None and (index + 1) < count:
-        return 'add {} place-before={}'.format(text, index + 1)
+        return 'add {} place-before={}'.format(text, index)
     else:
         return 'add {}'.format(text)
 
