@@ -245,16 +245,6 @@ class ConfigSection(ScriptSection):
 
 class MikrotikConfig(MikrotikScript):
 
-    # Override to prettify configs
-    # -------------------------------------------------------------------------
-    #
-    # "Config" objects are prettified by default, as opposed to "Script"
-    # objects, because they aren't usually executed on the remote device, but
-    # provided or presented to the operator, who doesn't need to see the
-    # dynamic ordering hacks, and usually prefers to have newlines separating
-    # each section.
-    prettify = True
-
     # Text import methods
     # -------------------------------------------------------------------------
     #
@@ -299,4 +289,3 @@ class MikrotikConfig(MikrotikScript):
 
     def difference(self, target):
         return self.copy().merge(target)
-
