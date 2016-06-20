@@ -1,5 +1,6 @@
 import paramiko
 import sys
+import socket
 
 from re import compile as compile_regex
 
@@ -7,10 +8,9 @@ from ansible.module_utils.basic import AnsibleModule
 from ansible.module_utils.basic import env_fallback, get_exception
 from ansible.module_utils.shell import Shell, ShellError
 
-from ansible_mikrotik_utils.script import EXPORT_REFRESH_SPECIAL_COMMENT
 from ansible_mikrotik_utils.config import MikrotikConfig
 
-from paramiko import SSHException, util
+from paramiko import AuthenticationException, SSHException, util
 from getpass import getuser
 
 if __debug__:
@@ -89,10 +89,15 @@ class MikrotikModule(AnsibleModule):
         kwargs['argument_spec'].update(NET_COMMON_ARGS)
         kwargs['argument_spec'].update(BACKUP_ARGS)
         kwargs['argument_spec'].update(RESTORE_ARGS)
+
         super(MikrotikModule, self).__init__(*args, **kwargs)
-        self.__shell = None
+
+        self.__ssh = None
         self.__config = None
+        self.__connected = False
         self.__protected = False
+        self.__failed = False
+        self.__disconnecting = False
         self.__history = list()
         self.___backup_name = None
         self.___backup_key = None
@@ -102,7 +107,7 @@ class MikrotikModule(AnsibleModule):
 
     @property
     def connected(self):
-        return self.__shell is not None
+        return self.__connected
 
     @property
     def protected(self):
@@ -249,89 +254,83 @@ class MikrotikModule(AnsibleModule):
     # -------------------------------------------------------------------------
 
     def __connect(self):
-        if self.__shell is None:
-            self.__shell = shell = Shell(
-                kickstart=True,
-                prompts_re=CLI_PROMPTS_RE,
-                errors_re=CLI_ERRORS_RE,
-            )
+        if not self.__connected:
+            self.__ssh = ssh = paramiko.SSHClient()
+            ssh.load_system_host_keys()
+            look_for_keys = self.__ssh_password is None
             try:
-
-                shell.open(
-                    host=self.__ssh_host,
-                    port=self.__ssh_port,
-                    username=self.__ssh_username,
-                    password=self.__ssh_password,
-                    key_filename=self.__ssh_keyfile,
-                    timeout=self.__ssh_timeout,
-                    allow_agent=True, look_for_keys=False
-                )
-            except self.catched_exceptions as ex:
-                message = "Failed to connect to {}@{}:{} : {}".format(
-                    self.__ssh_username, self.__ssh_host, self.__ssh_port,
-                    get_exception().message or ' '.join((type(ex).__name__, str(ex)))
-                )
-                self.fail_json(msg=message)
-                assert False
+                ssh.connect(
+                        hostname=self.__ssh_host,
+                        port=self.__ssh_port,
+                        username=self.__ssh_username,
+                        password=self.__ssh_password,
+                        key_filename=self.__ssh_keyfile,
+                        timeout=self.__ssh_timeout,
+                        allow_agent=True, look_for_keys=False
+                    )
+                stdin, stdout, stderr = ssh.exec_command('test', timeout=self.__ssh_timeout)
+                if "bad command name test (line 1 column 1)\n" not in stdout.readlines():
+                    self.__fail("Connection test failed. (result:{})".format(stdout.readlines()))
+            except socket.gaierror:
+                self.__fail("Unable to resolve hostname. (host:{})".format(self.__ssh_host))
+            except AuthenticationException:
+                self.__fail("Unable to authenticate (user:{})".format(self.__ssh_user))
+            except (SSHException, IOError) as ex:
+                self.__fail("Unable to connect ({})".format(str(ex)))
             else:
+                self.__connected = True
                 self.__backedup = False
 
     def __disconnect(self):
-        if self.__shell is not None:
-            self.__cleanup()
-            self.__shell.close()
-            self.__shell = None
+        if self.__connected:
+            self.__unprotect()
+            self.__ssh.close()
+            self.__ssh = None
 
-    def __send(self, commands, **kwargs):
+    def __send(self, command, no_history=False, no_fail=False,
+               no_log=False, no_log_response=False, no_log_command=False):
+        if not command:
+            return
+        if isinstance(command, (list, tuple)):
+            return '\n'.join(
+                self.__send(_command, no_log=no_log, no_history=no_history, no_fail=no_fail)
+                for _command in command
+            )
+
         self.__connect()
+        no_history = False
+        if not no_history:
+            self.__history.append(
+                "command: {}".format(command if not (no_log or no_log_command) else '<censored>')
+            )
+        stdin, stdout, stderr = self.__ssh.exec_command(command)
+        assert not stderr.read()
+        response = stdout.read()
+        for pattern in CLI_ERRORS_RE:
+            if pattern.match(response):
+                self.__history.append("error: {}".format(response))
+                if not no_fail:
+                    self.__fail("Error detected in reponse.", command=command, response=response)
+                    break
 
-        no_log = kwargs.pop('no_log') if 'no_log' in kwargs else False
-        no_log_command = kwargs.pop('no_log_command') if 'no_log_command' in kwargs else False
-        no_log_response = kwargs.pop('no_log_response') if 'no_log_response' in kwargs else False
-        responses = list()
-
-        for command in commands:
-            if EXPORT_REFRESH_SPECIAL_COMMENT not in command:
-                if no_log_command:
-                    self.__history.append("command: <censured...>")
-                else:
-                    self.__history.append("command: {}".format(command))
-            try:
-                response = self.__shell.send(command, **kwargs)
-            except self.catched_exceptions:
-                self.__history.append("error: {}: {}".format(type(ex).__name__, str(ex)))
-                raise
-            else:
-                response_raw = response[0]
-                response_text = response_raw.replace('\n', '').strip().lstrip(command).strip()
-                if EXPORT_REFRESH_SPECIAL_COMMENT not in command:
-                    if no_log_response:
-                        self.__history.append(
-                            "response: <{} characters, {} lines censured...>"
-                            "".format(len(response_raw), len(response_raw.split('\n')))
-                        )
-                    else:
-                        self.__history.append("response: {}".format(response_text))
-                    responses.append(response_raw)
-
-        return responses
+        return str()
 
     # Device protection handling
     # -------------------------------------------------------------------------
 
     def __protect(self):
         if self.__protection_required and not self.__protected:
+            self.__backup()
             for name, args in self.__restore_tasks:
                 self.__send(('/system scheduler add name={} {}'.format(name, args),))
-            self.__backup()
             self.__protected = True
 
     def __unprotect(self):
         if self.__protection_required and not self.__protected:
             for name, args in self.__restore_tasks:
                 self.__send(('/system scheduler remove {}'.format(name, args),))
-            self.__cleanup()
             self.__protected = False
+            self.__cleanup()
 
     # Backup handling
     # -------------------------------------------------------------------------
@@ -354,6 +353,28 @@ class MikrotikModule(AnsibleModule):
     def __restore(self):
         self.__send((self.__backup_load_command,))
 
+    # Foobar
+    # -------------------------------------------------------------------------
+
+    def __fail(self, message, **kwargs):
+        released, disconnected = False, False
+        if not self.__failed:
+            self.__failed = True
+            self.__unprotect()
+            self.__cleanup()
+            released = True
+        else:
+            if not self.__disconnecting:
+                self.__disconnecting = True
+                self.__disconnect()
+                disconnected = True
+        self.fail_json(
+            msg=message,
+            released=released,
+            disconnected=disconnected,
+            **kwargs
+        )
+
     # Configuration export by device
     # -------------------------------------------------------------------------
 
@@ -374,26 +395,27 @@ class MikrotikModule(AnsibleModule):
         text =  self.__send(('/export',), no_log_response=True)[0]
         return MikrotikConfig.parse(text)
 
+    def __clear(self):
+        self.__config = None
+
     # Public methods (used by implemented CM modules)
     # -------------------------------------------------------------------------
 
-    def execute(self, commands, no_log=False):
-        commands = list(commands)
-        if commands:
-            self.__backup()
-            self.__protect()
-            try:
-                if not self.check_mode:
-                    return self.__send(commands, no_log=no_log)
-            except self.catched_exceptions:
-                self.__restore()
-                raise
-            else:
-                self.__unprotect()
-            finally:
-                self.__config = None
+    def execute(self, commands, before=None, after=None, no_log=False):
+        commands, result = list(commands), None
+        pre = self.config.copy()
+        if not self.check_mode:
+            if before:
+                self.__send(before)
+            response = self.__send(commands, no_log=no_log)
+            if after:
+                self.__send(after)
+            self.__clear()
+        post = self.config.copy()
+        changes = pre.difference(post)
+        return response, changes
 
-    def configure(self, target, before=None, after=None):
+    def configure(self, target, **kwargs):
         if not isinstance(target, MikrotikConfig):
             target = MikrotikConfig.parse(target)
         response = None
@@ -403,16 +425,12 @@ class MikrotikModule(AnsibleModule):
         changes = new_config.merge(target)
 
         if changes and not self.check_mode:
-            if before:
-                self.__send(list(before.export()))
-            response = self.execute(changes.export())
-            if after:
-                self.__send(list(after.export()))
-            assert self.config is not old_config
+            response, actual = self.execute(changes.export(), **kwargs)
+
             missing_config = self.config.difference(new_config)
             if missing_config:
-                self.fail_json(
-                    msg="Failed to reach target configuration",
+                self.__fail(
+                    "Failed to reach target configuration",
                     history=self.history,
                     changes=list(changes.show()),
                     missing=list(missing_config.show())
@@ -426,7 +444,10 @@ class MikrotikModule(AnsibleModule):
     # -------------------------------------------------------------------------
 
     def __enter__(self):
-        self.__connect()
+        self.__protect()
+        self.__backup()
 
-    def __exit__(self, *exc_details):
+    def __exit__(self, exc_type, exc_value, exc_tb):
+        if exc_value is not None and False:
+            self.__fail("Unknown {} error : {}".format(exc_type.__name__, str(exc_type)))
         self.__disconnect()
