@@ -10,7 +10,7 @@ _keywords = ['mikrotik', 'ansible', 'configuration']
 # Pwackages
 # --------
 
-_packages = find_packages('src')
+_packages = find_packages('src', exclude=("tests", "tests.*"))
 _package_dir = {'ansible_mikrotik_utils': 'src/ansible_mikrotik_utils'}
 
 # Additional meta-data
