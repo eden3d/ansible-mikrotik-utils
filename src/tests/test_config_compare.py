@@ -1,4 +1,10 @@
-from ansible_mikrotik_utils import MikrotikConfig, MikrotikScript
+from pytest import fixture
+
+from ansible_mikrotik_utils.device import Device
+from ansible_mikrotik_utils.sections import ConfigSection, ScriptSection
+
+# Assets
+# =============================================================================
 
 CONFIG_BASE = """
 /ip address
@@ -54,20 +60,32 @@ remove 5
 add chain=test comment=foo place-before=0
 add chain=test comment=bar
 move 1 4
-move 2 2
 move 1 6
 move 2 4
 """
 
 
-def test_compare():
-    base, target = map(MikrotikConfig.parse, (CONFIG_BASE, CONFIG_TARGET))
-    actual_changes = str(base.difference(target))
-    expected_changes = '\n'.join(map(str.strip, CONFIG_CHANGES.strip().split('\n')))
-    assert actual_changes == expected_changes
+# Fixtures
+# =============================================================================
 
-def test_apply():
-    base, target = map(MikrotikConfig.parse, (CONFIG_BASE, CONFIG_TARGET))
-    changes = MikrotikScript.parse(CONFIG_CHANGES)
-    base.apply(changes)
-    assert not base.difference(target)
+@fixture
+def device():
+    return Device()
+
+@fixture
+def config_base(device):
+    return ConfigSection.from_text(CONFIG_BASE, device=device)
+
+@fixture
+def config_target(device):
+    return ConfigSection.from_text(CONFIG_TARGET, device=device)
+
+@fixture
+def config_changes(device):
+    return ScriptSection.from_text(CONFIG_CHANGES, device=device)
+
+# Tests
+# =============================================================================
+
+def test_compare(config_base, config_target, config_changes):
+    assert list(map(str, config_base.difference(config_target))) == list(map(str, config_changes))
