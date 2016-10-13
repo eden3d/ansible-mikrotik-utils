@@ -4,7 +4,7 @@ from setuptools import setup, find_packages
 # Root package meta-data
 # ----------------------
 _name = 'ansible-mikrotik-utils'
-_version = '0.0.2'
+_version = '0.0.3'
 _keywords = ['mikrotik', 'ansible', 'configuration']
 
 # Pwackages
