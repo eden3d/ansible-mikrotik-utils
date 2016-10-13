@@ -10,7 +10,7 @@ Current status
 --------------
 
  - This is still a WIP, as indicated by the version number.
- - Two example modules are provided: mkr_config, and mkr_command
+ - Two example modules are provided in `mkr`: mkr_config, and mkr_command
  - mkr_config provides a good example of the features of this library
 
  - the library uses a Python object structure to store the configuration, 
