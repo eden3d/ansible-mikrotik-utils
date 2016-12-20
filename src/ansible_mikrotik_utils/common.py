@@ -128,7 +128,7 @@ def format_add_destination(destination):
 def format_censored(text):
     lines = split_lines(text)
     if len(lines) > 1:
-        return '<{} censord lines>'.format(len(lines))
+        return '<{} censored lines>'.format(len(lines))
     else:
         return '<{} censord characters>'.format(len(lines[0]))
 
